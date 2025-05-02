@@ -3,20 +3,22 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace PomodoroApp
 {
     public partial class MainForm : Form
     {
-        private System.Windows.Forms.Timer timer;
-        private System.Windows.Forms.Timer breakTimer;
+        private System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+        private System.Windows.Forms.Timer breakTimer = new System.Windows.Forms.Timer();
         private int remainingSeconds;
         private int breakRemainingSeconds;
         private int pomodoroDuration = 25 * 60; // Default 25 minutes
         private int breakDuration = 5 * 60; // Default 5 minutes
         private bool isInputBlocked = false;
-        private Form darkOverlayForm;
-        private Label overlayTimerLabel;
+        private List<Form> darkOverlayForms = new List<Form>();
+        private Label? overlayTimerLabel; // Nullable since it may not be initialized immediately
 
         [DllImport("user32.dll")]
         private static extern bool BlockInput(bool fBlockIt);
@@ -26,6 +28,8 @@ namespace PomodoroApp
             InitializeComponent();
             InitializeTimers();
             InitializeUI();
+
+            this.Icon = new Icon("assets\\clock.ico");
         }
 
         private void InitializeComponent()
@@ -60,6 +64,7 @@ namespace PomodoroApp
             mainPanel.Size = new Size(450, 450);
             mainPanel.Location = new Point(25, 25);
             mainPanel.BackColor = Color.FromArgb(45, 45, 45);
+            mainPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             mainPanel.Paint += (s, e) =>
             {
                 using (GraphicsPath path = new GraphicsPath())
@@ -143,22 +148,35 @@ namespace PomodoroApp
 
         private void InitializeDarkOverlay()
         {
-            darkOverlayForm = new Form();
-            darkOverlayForm.FormBorderStyle = FormBorderStyle.None;
-            darkOverlayForm.WindowState = FormWindowState.Maximized;
-            darkOverlayForm.BackColor = Color.FromArgb(0, 0, 0);
-            darkOverlayForm.Opacity = 0.8;
-            darkOverlayForm.TopMost = true;
+            foreach (var screen in Screen.AllScreens)
+            {
+                Form overlayForm = new Form();
+                overlayForm.FormBorderStyle = FormBorderStyle.None;
+                overlayForm.WindowState = FormWindowState.Normal;
+                overlayForm.StartPosition = FormStartPosition.Manual;
+                overlayForm.Bounds = screen.Bounds;
+                overlayForm.BackColor = Color.FromArgb(0, 0, 0);
+                overlayForm.Opacity = 0.8;
+                overlayForm.TopMost = true;
 
-            overlayTimerLabel = new Label();
-            overlayTimerLabel.Font = new Font("Segoe UI", 72, FontStyle.Bold);
-            overlayTimerLabel.ForeColor = Color.White;
-            overlayTimerLabel.AutoSize = true;
-            overlayTimerLabel.Location = new Point(
-                (Screen.PrimaryScreen.Bounds.Width - overlayTimerLabel.Width) / 2,
-                (Screen.PrimaryScreen.Bounds.Height - overlayTimerLabel.Height) / 2
-            );
-            darkOverlayForm.Controls.Add(overlayTimerLabel);
+                Label overlayLabel = new Label();
+                overlayLabel.Font = new Font("Segoe UI", 72, FontStyle.Bold);
+                overlayLabel.ForeColor = Color.White;
+                overlayLabel.AutoSize = true;
+                overlayLabel.TextAlign = ContentAlignment.MiddleCenter;
+                overlayLabel.Location = new Point(
+                    (screen.Bounds.Width - overlayLabel.Width) / 2,
+                    (screen.Bounds.Height - overlayLabel.Height) / 2
+                );
+                overlayForm.Controls.Add(overlayLabel);
+
+                darkOverlayForms.Add(overlayForm);
+
+                if (screen == Screen.PrimaryScreen)
+                {
+                    overlayTimerLabel = overlayLabel; // Use the label on the primary screen for timer updates
+                }
+            }
         }
 
         private void Timer_Tick(object sender, EventArgs e)
@@ -190,30 +208,38 @@ namespace PomodoroApp
                 isInputBlocked = false;
                 remainingSeconds = pomodoroDuration;
                 UpdateTimeLabel();
-                MessageBox.Show("Break time is over! Time to get back to work.", "Break Complete");
             }
         }
 
         private void ShowDarkOverlay()
         {
-            darkOverlayForm.Show();
+            foreach (var overlayForm in darkOverlayForms)
+            {
+                overlayForm.Show();
+            }
             UpdateOverlayTimer();
         }
 
         private void HideDarkOverlay()
         {
-            darkOverlayForm.Hide();
+            foreach (var overlayForm in darkOverlayForms)
+            {
+                overlayForm.Hide();
+            }
         }
 
         private void UpdateOverlayTimer()
         {
-            if (darkOverlayForm.Visible)
+            if (darkOverlayForms.Any(f => f.Visible) && overlayTimerLabel != null)
             {
                 overlayTimerLabel.Text = $"Take a break for:\n{FormatTime(breakRemainingSeconds)}";
-                overlayTimerLabel.Location = new Point(
-                    (Screen.PrimaryScreen.Bounds.Width - overlayTimerLabel.Width) / 2,
-                    (Screen.PrimaryScreen.Bounds.Height - overlayTimerLabel.Height) / 2
-                );
+                foreach (var overlayForm in darkOverlayForms)
+                {
+                    overlayTimerLabel.Location = new Point(
+                        (overlayForm.Bounds.Width - overlayTimerLabel.Width) / 2,
+                        (overlayForm.Bounds.Height - overlayTimerLabel.Height) / 2
+                    );
+                }
             }
         }
 
@@ -243,8 +269,11 @@ namespace PomodoroApp
 
         private void UpdateTimeLabel()
         {
-            Control timeLabel = this.Controls.Find("timeLabel", true)[0];
-            timeLabel.Text = FormatTime(remainingSeconds);
+            var timeLabel = this.Controls.Find("timeLabel", true).FirstOrDefault() as Label;
+            if (timeLabel != null)
+            {
+                timeLabel.Text = FormatTime(remainingSeconds);
+            }
         }
 
         private string FormatTime(int seconds)
@@ -263,4 +292,4 @@ namespace PomodoroApp
             base.OnFormClosing(e);
         }
     }
-} 
+}
