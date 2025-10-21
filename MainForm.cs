@@ -1,35 +1,46 @@
 using System;
-using System.Windows.Forms;
-using System.Runtime.InteropServices;
 using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Forms;
+using PomodoroApp.Constants;
+using PomodoroApp.Models;
+using PomodoroApp.Services;
+using PomodoroApp.UI;
+using PomodoroApp.Utils;
 
 namespace PomodoroApp
 {
+    /// <summary>
+    /// Main form for the FocusSwift Pomodoro Timer application
+    /// </summary>
     public partial class MainForm : Form
     {
-        private System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
-        private System.Windows.Forms.Timer breakTimer = new System.Windows.Forms.Timer();
-        private int remainingSeconds;
-        private int breakRemainingSeconds;
-        private int pomodoroDuration = 25 * 60; // Default 25 minutes
-        private int breakDuration = 5 * 60; // Default 5 minutes
-        private bool isInputBlocked = false;
-        private List<Form> darkOverlayForms = new List<Form>();
-        private Label? overlayTimerLabel; // Nullable since it may not be initialized immediately
-
-        [DllImport("user32.dll")]
-        private static extern bool BlockInput(bool fBlockIt);
+        private readonly PomodoroTimerService _timerService;
+        private readonly OverlayManager _overlayManager;
+        private Label? _timeLabel;
+        private Label? _statusLabel;
+        private Button? _startButton;
+        private ProgressBar? _progressBar;
+        private Panel? _timerCard;
+        private bool _disposed;
 
         public MainForm()
         {
-            InitializeComponent();
-            InitializeTimers();
-            InitializeUI();
+            _timerService = new PomodoroTimerService();
+            _overlayManager = new OverlayManager();
 
-            this.Icon = new Icon("assets\\clock.ico");
+            InitializeComponent();
+            InitializeUI();
+            AttachEventHandlers();
+
+            try
+            {
+                this.Icon = new Icon(AppConstants.IconPath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to load icon: {ex.Message}");
+            }
         }
 
         private void InitializeComponent()
@@ -38,258 +49,372 @@ namespace PomodoroApp
             // but we're creating controls programmatically in InitializeUI
         }
 
-        private void InitializeTimers()
+        private void AttachEventHandlers()
         {
-            timer = new System.Windows.Forms.Timer();
-            timer.Interval = 1000; // 1 second
-            timer.Tick += Timer_Tick;
-            remainingSeconds = pomodoroDuration;
-
-            breakTimer = new System.Windows.Forms.Timer();
-            breakTimer.Interval = 1000; // 1 second
-            breakTimer.Tick += BreakTimer_Tick;
-            breakRemainingSeconds = breakDuration;
+            _timerService.TimerTick += OnTimerTick;
+            _timerService.TimerCompleted += OnTimerCompleted;
+            _timerService.StateChanged += OnTimerStateChanged;
         }
 
         private void InitializeUI()
         {
-            this.Text = "FocusSwift - Pomodoro Timer";
-            this.Size = new Size(500, 500);
+            ConfigureFormProperties();
+            var mainPanel = CreateMainPanel();
+            CreateHeader(mainPanel);
+            CreateTimerCard(mainPanel);
+            CreateSettingsSection(mainPanel);
+            CreateActionButton(mainPanel);
+        }
+
+        private void ConfigureFormProperties()
+        {
+            this.Text = AppConstants.AppTitle;
+            this.Size = new Size(AppConstants.MainFormWidth, AppConstants.MainFormHeight);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.FromArgb(30, 30, 30);
+            this.BackColor = Color.FromArgb(
+                AppConstants.Colors.BackgroundColor[0],
+                AppConstants.Colors.BackgroundColor[1],
+                AppConstants.Colors.BackgroundColor[2]
+            );
             this.ForeColor = Color.White;
+            this.FormBorderStyle = FormBorderStyle.FixedSingle;
+            this.MaximizeBox = false;
+        }
 
-            // Create a rounded panel for the main content
-            Panel mainPanel = new Panel();
-            mainPanel.Size = new Size(450, 450);
-            mainPanel.Location = new Point(25, 25);
-            mainPanel.BackColor = Color.FromArgb(45, 45, 45);
-            mainPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            mainPanel.Paint += (s, e) =>
-            {
-                using (GraphicsPath path = new GraphicsPath())
-                {
-                    path.AddArc(0, 0, 20, 20, 180, 90);
-                    path.AddArc(mainPanel.Width - 20, 0, 20, 20, 270, 90);
-                    path.AddArc(mainPanel.Width - 20, mainPanel.Height - 20, 20, 20, 0, 90);
-                    path.AddArc(0, mainPanel.Height - 20, 20, 20, 90, 90);
-                    path.CloseFigure();
-                    mainPanel.Region = new Region(path);
-                }
-            };
+        private Panel CreateMainPanel()
+        {
+            var mainPanel = UIComponentFactory.CreateRoundedPanel(
+                AppConstants.MainPanelWidth,
+                AppConstants.MainPanelHeight,
+                AppConstants.PanelMargin,
+                AppConstants.PanelMargin
+            );
             this.Controls.Add(mainPanel);
-
-            // Timer label
-            Label timeLabel = new Label();
-            timeLabel.Text = FormatTime(remainingSeconds);
-            timeLabel.Font = new Font("Segoe UI", 48, FontStyle.Bold);
-            timeLabel.AutoSize = true;
-            timeLabel.Location = new Point(150, 50);
-            timeLabel.Name = "timeLabel";
-            mainPanel.Controls.Add(timeLabel);
-
-            // Pomodoro duration controls
-            Label pomodoroLabel = new Label();
-            pomodoroLabel.Text = "Pomodoro Duration (minutes):";
-            pomodoroLabel.Font = new Font("Segoe UI", 12);
-            pomodoroLabel.Location = new Point(50, 150);
-            mainPanel.Controls.Add(pomodoroLabel);
-
-            NumericUpDown pomodoroInput = new NumericUpDown();
-            pomodoroInput.Value = 25;
-            pomodoroInput.Minimum = 1;
-            pomodoroInput.Maximum = 60;
-            pomodoroInput.Width = 60;
-            pomodoroInput.Location = new Point(250, 150);
-            pomodoroInput.ValueChanged += (s, e) =>
-            {
-                pomodoroDuration = (int)pomodoroInput.Value * 60;
-                remainingSeconds = pomodoroDuration;
-                UpdateTimeLabel();
-            };
-            mainPanel.Controls.Add(pomodoroInput);
-
-            // Break duration controls
-            Label breakLabel = new Label();
-            breakLabel.Text = "Break Duration (minutes):";
-            breakLabel.Font = new Font("Segoe UI", 12);
-            breakLabel.Location = new Point(50, 200);
-            mainPanel.Controls.Add(breakLabel);
-
-            NumericUpDown breakInput = new NumericUpDown();
-            breakInput.Value = 5;
-            breakInput.Minimum = 1;
-            breakInput.Maximum = 30;
-            breakInput.Width = 60;
-            breakInput.Location = new Point(250, 200);
-            breakInput.ValueChanged += (s, e) =>
-            {
-                breakDuration = (int)breakInput.Value * 60;
-                breakRemainingSeconds = breakDuration;
-            };
-            mainPanel.Controls.Add(breakInput);
-
-            // Start/Stop button
-            Button startButton = new Button();
-            startButton.Text = "Start";
-            startButton.Font = new Font("Segoe UI", 14);
-            startButton.Size = new Size(150, 50);
-            startButton.Location = new Point(150, 300);
-            startButton.FlatStyle = FlatStyle.Flat;
-            startButton.BackColor = Color.FromArgb(0, 120, 215);
-            startButton.ForeColor = Color.White;
-            startButton.FlatAppearance.BorderSize = 0;
-            startButton.Click += StartButton_Click;
-            mainPanel.Controls.Add(startButton);
-
-            // Initialize dark overlay form
-            InitializeDarkOverlay();
+            return mainPanel;
         }
 
-        private void InitializeDarkOverlay()
+        private void CreateHeader(Panel parent)
         {
-            foreach (var screen in Screen.AllScreens)
+            // App title
+            var titleLabel = new Label
             {
-                Form overlayForm = new Form();
-                overlayForm.FormBorderStyle = FormBorderStyle.None;
-                overlayForm.WindowState = FormWindowState.Normal;
-                overlayForm.StartPosition = FormStartPosition.Manual;
-                overlayForm.Bounds = screen.Bounds;
-                overlayForm.BackColor = Color.FromArgb(0, 0, 0);
-                overlayForm.Opacity = 0.8;
-                overlayForm.TopMost = true;
+                Text = AppConstants.AppTitle,
+                Font = new Font("Segoe UI", 28f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(
+                    AppConstants.Colors.PrimaryText[0],
+                    AppConstants.Colors.PrimaryText[1],
+                    AppConstants.Colors.PrimaryText[2]
+                ),
+                AutoSize = true,
+                Location = new Point(40, 30),
+                BackColor = Color.Transparent
+            };
+            parent.Controls.Add(titleLabel);
 
-                Label overlayLabel = new Label();
-                overlayLabel.Font = new Font("Segoe UI", 72, FontStyle.Bold);
-                overlayLabel.ForeColor = Color.White;
-                overlayLabel.AutoSize = true;
-                overlayLabel.TextAlign = ContentAlignment.MiddleCenter;
-                overlayLabel.Location = new Point(
-                    (screen.Bounds.Width - overlayLabel.Width) / 2,
-                    (screen.Bounds.Height - overlayLabel.Height) / 2
+            // Subtitle
+            var subtitleLabel = UIComponentFactory.CreateLabel(
+                AppConstants.AppSubtitle,
+                AppConstants.SubtitleFontSize,
+                40,
+                85,
+                true,
+                true
+            );
+            parent.Controls.Add(subtitleLabel);
+        }
+
+        private void CreateTimerCard(Panel parent)
+        {
+            // Create timer card - increased height for better spacing
+            _timerCard = UIComponentFactory.CreateCard(460, 250, 40, 120);
+            parent.Controls.Add(_timerCard);
+
+            // Status label
+            _statusLabel = UIComponentFactory.CreateSectionTitle(
+                AppConstants.FocusTimeText,
+                0,
+                25
+            );
+            _statusLabel.AutoSize = false;
+            _statusLabel.TextAlign = ContentAlignment.MiddleCenter;
+            _statusLabel.Width = 460;
+            _timerCard.Controls.Add(_statusLabel);
+
+            // Timer display
+            _timeLabel = new Label
+            {
+                Text = TimeFormatter.FormatTime(_timerService.RemainingSeconds),
+                Font = new Font("Segoe UI", AppConstants.TimerLabelFontSize, FontStyle.Bold),
+                ForeColor = Color.FromArgb(
+                    AppConstants.Colors.PrimaryAccent[0],
+                    AppConstants.Colors.PrimaryAccent[1],
+                    AppConstants.Colors.PrimaryAccent[2]
+                ),
+                AutoSize = false,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Size = new Size(460, 120),
+                Location = new Point(0, 60),
+                Name = "timeLabel",
+                BackColor = Color.Transparent
+            };
+            _timerCard.Controls.Add(_timeLabel);
+
+            // Progress bar
+            _progressBar = UIComponentFactory.CreateProgressBar(420, 8, 20, 210);
+            _progressBar.Maximum = _timerService.PomodoroDurationMinutes * 60;
+            _progressBar.Value = _timerService.RemainingSeconds;
+            _timerCard.Controls.Add(_progressBar);
+        }
+
+        private void CreateSettingsSection(Panel parent)
+        {
+            int yPos = 390;
+            
+            // Settings container - increased height for better spacing
+            var settingsCard = UIComponentFactory.CreateCard(460, 150, 40, yPos);
+            parent.Controls.Add(settingsCard);
+
+            // Pomodoro settings
+            CreateDurationControl(
+                settingsCard,
+                AppConstants.PomodoroLabelText,
+                AppConstants.DefaultPomodoroDurationMinutes,
+                AppConstants.MinPomodoroDurationMinutes,
+                AppConstants.MaxPomodoroDurationMinutes,
+                35,
+                (value) =>
+                {
+                    _timerService.PomodoroDurationMinutes = (int)value;
+                    UpdateTimerDisplay();
+                    UpdateProgressBar();
+                }
+            );
+
+            // Break settings
+            CreateDurationControl(
+                settingsCard,
+                AppConstants.BreakLabelText,
+                AppConstants.DefaultBreakDurationMinutes,
+                AppConstants.MinBreakDurationMinutes,
+                AppConstants.MaxBreakDurationMinutes,
+                95,
+                (value) => _timerService.BreakDurationMinutes = (int)value
+            );
+        }
+
+        private void CreateDurationControl(Panel parent, string labelText, int defaultValue, int min, int max, int yPos, Action<decimal> onChange)
+        {
+            // Label
+            var label = UIComponentFactory.CreateSectionTitle(labelText, 30, yPos);
+            parent.Controls.Add(label);
+
+            // Numeric input
+            var input = UIComponentFactory.CreateNumericInput(
+                defaultValue,
+                min,
+                max,
+                100,
+                320,
+                yPos - 10
+            );
+            input.ValueChanged += (s, e) => onChange(input.Value);
+            parent.Controls.Add(input);
+
+            // Minutes label - positioned after the input with proper spacing
+            var minutesLabel = UIComponentFactory.CreateLabel(
+                AppConstants.MinutesText,
+                AppConstants.SubtitleFontSize,
+                245,
+                yPos,
+                true,
+                true
+            );
+            parent.Controls.Add(minutesLabel);
+        }
+
+        private void CreateActionButton(Panel parent)
+        {
+            _startButton = UIComponentFactory.CreateStartButton(380, 60, 80, 560);
+            _startButton.Click += StartButton_Click;
+            parent.Controls.Add(_startButton);
+        }
+
+        #region Event Handlers
+
+        private void OnTimerTick(object? sender, TimerTickEventArgs e)
+        {
+            UpdateTimerDisplay();
+            UpdateStatusLabel();
+
+            if (e.State == TimerState.Break)
+            {
+                UpdateBreakOverlay();
+            }
+        }
+
+        private void OnTimerCompleted(object? sender, TimerCompletedEventArgs e)
+        {
+            if (e.CompletedState == TimerState.Running)
+            {
+                // Pomodoro completed, start break
+                ShowBreakOverlay();
+                UpdateStatusLabel();
+            }
+            else if (e.CompletedState == TimerState.Break)
+            {
+                // Break completed
+                _overlayManager.HideOverlay();
+                UpdateStatusLabel();
+            }
+        }
+
+        private void OnTimerStateChanged(object? sender, EventArgs e)
+        {
+            UpdateButtonState();
+            UpdateStatusLabel();
+        }
+
+        private void StartButton_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (_timerService.CurrentState == TimerState.Running || 
+                    _timerService.CurrentState == TimerState.Break)
+                {
+                    _timerService.Stop();
+                    
+                    if (_overlayManager.IsOverlayVisible)
+                    {
+                        _overlayManager.HideOverlay();
+                    }
+                }
+                else
+                {
+                    _timerService.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"An error occurred: {ex.Message}",
+                    "Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error
                 );
-                overlayForm.Controls.Add(overlayLabel);
-
-                darkOverlayForms.Add(overlayForm);
-
-                if (screen == Screen.PrimaryScreen)
-                {
-                    overlayTimerLabel = overlayLabel; // Use the label on the primary screen for timer updates
-                }
             }
         }
 
-        private void Timer_Tick(object sender, EventArgs e)
+        #endregion
+
+        #region UI Update Methods
+
+        private void UpdateTimerDisplay()
         {
-            remainingSeconds--;
-            UpdateTimeLabel();
-
-            if (remainingSeconds <= 0)
+            if (_timeLabel != null)
             {
-                timer.Stop();
-                ShowDarkOverlay();
-                BlockInput(true);
-                isInputBlocked = true;
-                breakRemainingSeconds = breakDuration;
-                breakTimer.Start();
+                _timeLabel.Text = TimeFormatter.FormatTime(_timerService.RemainingSeconds);
             }
+            UpdateProgressBar();
         }
 
-        private void BreakTimer_Tick(object sender, EventArgs e)
+        private void UpdateProgressBar()
         {
-            breakRemainingSeconds--;
-            UpdateOverlayTimer();
-
-            if (breakRemainingSeconds <= 0)
+            if (_progressBar != null)
             {
-                breakTimer.Stop();
-                HideDarkOverlay();
-                BlockInput(false);
-                isInputBlocked = false;
-                remainingSeconds = pomodoroDuration;
-                UpdateTimeLabel();
+                int totalSeconds = _timerService.CurrentState == TimerState.Break
+                    ? _timerService.BreakDurationMinutes * 60
+                    : _timerService.PomodoroDurationMinutes * 60;
+                
+                _progressBar.Maximum = totalSeconds;
+                _progressBar.Value = Math.Max(0, Math.Min(_timerService.RemainingSeconds, totalSeconds));
             }
         }
 
-        private void ShowDarkOverlay()
+        private void UpdateStatusLabel()
         {
-            foreach (var overlayForm in darkOverlayForms)
+            if (_statusLabel != null)
             {
-                overlayForm.Show();
-            }
-            UpdateOverlayTimer();
-        }
-
-        private void HideDarkOverlay()
-        {
-            foreach (var overlayForm in darkOverlayForms)
-            {
-                overlayForm.Hide();
+                _statusLabel.Text = _timerService.CurrentState == TimerState.Break
+                    ? AppConstants.BreakTimeText.ToUpper()
+                    : AppConstants.FocusTimeText.ToUpper();
             }
         }
 
-        private void UpdateOverlayTimer()
+        private void UpdateButtonState()
         {
-            if (darkOverlayForms.Any(f => f.Visible) && overlayTimerLabel != null)
+            if (_startButton != null)
             {
-                overlayTimerLabel.Text = $"Take a break for:\n{FormatTime(breakRemainingSeconds)}";
-                foreach (var overlayForm in darkOverlayForms)
-                {
-                    overlayTimerLabel.Location = new Point(
-                        (overlayForm.Bounds.Width - overlayTimerLabel.Width) / 2,
-                        (overlayForm.Bounds.Height - overlayTimerLabel.Height) / 2
-                    );
-                }
+                bool isRunning = _timerService.CurrentState == TimerState.Running || 
+                                _timerService.CurrentState == TimerState.Break;
+                UIComponentFactory.UpdateButtonForState(_startButton, isRunning);
             }
         }
 
-        private void StartButton_Click(object sender, EventArgs e)
+        private void ShowBreakOverlay()
         {
-            Button button = (Button)sender;
-            if (timer.Enabled)
+            string message = string.Format(
+                AppConstants.BreakMessageFormat,
+                TimeFormatter.FormatTime(_timerService.RemainingSeconds)
+            );
+            _overlayManager.ShowOverlay(message);
+        }
+
+        private void UpdateBreakOverlay()
+        {
+            if (_overlayManager.IsOverlayVisible)
             {
-                timer.Stop();
-                breakTimer.Stop();
-                button.Text = "Start";
-                button.BackColor = Color.FromArgb(0, 120, 215);
-                if (isInputBlocked)
-                {
-                    HideDarkOverlay();
-                    BlockInput(false);
-                    isInputBlocked = false;
-                }
-            }
-            else
-            {
-                timer.Start();
-                button.Text = "Stop";
-                button.BackColor = Color.FromArgb(215, 0, 0);
+                string message = string.Format(
+                    AppConstants.BreakMessageFormat,
+                    TimeFormatter.FormatTime(_timerService.RemainingSeconds)
+                );
+                _overlayManager.UpdateOverlayText(message);
             }
         }
 
-        private void UpdateTimeLabel()
-        {
-            var timeLabel = this.Controls.Find("timeLabel", true).FirstOrDefault() as Label;
-            if (timeLabel != null)
-            {
-                timeLabel.Text = FormatTime(remainingSeconds);
-            }
-        }
+        #endregion
 
-        private string FormatTime(int seconds)
-        {
-            int minutes = seconds / 60;
-            int remainingSeconds = seconds % 60;
-            return $"{minutes:D2}:{remainingSeconds:D2}";
-        }
+        #region Cleanup
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (isInputBlocked)
+            try
             {
-                BlockInput(false);
+                // Stop timer and hide overlay before closing
+                if (_timerService.CurrentState == TimerState.Running || 
+                    _timerService.CurrentState == TimerState.Break)
+                {
+                    _timerService.Stop();
+                }
+
+                if (_overlayManager.IsOverlayVisible)
+                {
+                    _overlayManager.HideOverlay();
+                }
             }
-            base.OnFormClosing(e);
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error during form closing: {ex.Message}");
+            }
+            finally
+            {
+                base.OnFormClosing(e);
+            }
         }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    _timerService?.Dispose();
+                    _overlayManager?.Dispose();
+                }
+                _disposed = true;
+            }
+            base.Dispose(disposing);
+        }
+
+        #endregion
     }
 }
