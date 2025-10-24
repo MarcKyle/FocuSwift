@@ -1,4 +1,4 @@
-# FocuSwift# FocuSwift
+# FocuSwift
 
 
 
@@ -10,7 +10,7 @@ FocuSwift is a simple and elegant Pomodoro timer application designed to help yo
 
 
 
-## Features## Features
+## Features
 
 
 
@@ -32,12 +32,7 @@ FocuSwift is a simple and elegant Pomodoro timer application designed to help yo
 
 
 
----## Getting Started
-
-
-
-## Architecture### Prerequisites
-
+## Getting Started
 
 
 FocuSwift has been completely refactored to follow best practices:- Windows OS
@@ -60,7 +55,7 @@ FocuSwift has been completely refactored to follow best practices:- Windows OS
 
 2. Build the application
 
-```    ```bash
+```bash
 
 FocuSwift/    dotnet build
 
@@ -79,7 +74,6 @@ FocuSwift/    dotnet build
 
 For detailed architecture documentation, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
----
 
 ## Getting Started
 
@@ -176,18 +170,3 @@ Contributions are welcome! Please:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
-
-## Acknowledgments
-
-- Pomodoro Technique® by Francesco Cirillo
-- Built with .NET 6.0 and Windows Forms
-- Icons and visual design inspired by modern productivity apps
-
----
-
-## Contact
-
-Marc Kyle - [@MarcKyle](https://github.com/MarcKyle)
-
-Project Link: [https://github.com/MarcKyle/FocuSwift](https://github.com/MarcKyle/FocuSwift)
